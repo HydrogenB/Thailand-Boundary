@@ -9,52 +9,97 @@
   html, body { height: 100%; margin: 0; font-family: system-ui, "Segoe UI", sans-serif; }
   #map { position: absolute; inset: 0; }
   .panel {
-    position: absolute; z-index: 1000; top: 12px; left: 12px; width: 300px;
+    position: absolute; z-index: 1000; top: 12px; left: 12px; width: 320px;
     padding: 12px 14px; background: #fff; border-radius: 10px;
     box-shadow: 0 2px 10px rgba(0,0,0,.25); font-size: 13px; line-height: 1.5;
   }
   .panel h1 { margin: 0 0 4px; font-size: 15px; }
-  .src { color: #666; font-size: 11px; margin-bottom: 10px; word-break: break-all; }
+  .src { color: #666; font-size: 11px; margin-bottom: 8px; word-break: break-all; }
   .result { font-size: 15px; font-weight: 700; margin: 8px 0 4px; }
   .in { color: #137333; } .out { color: #b3261e; } .muted { color: #666; font-weight: 400; }
   label { display: block; margin-top: 8px; color: #444; }
   input, select { width: 100%; font: inherit; }
+  .alert {
+    display: none; margin: 8px 0; padding: 8px 10px; border-radius: 8px;
+    font-size: 12px; line-height: 1.45;
+  }
+  .alert.stale { display: block; background: #fef7e0; border: 1px solid #f0c000; color: #7a5900; }
+  .alert.same  { display: block; background: #e6f4ea; border: 1px solid #a8d5b5; color: #137333; }
+  .alert.unknown { display: block; background: #f1f3f4; border: 1px solid #dadce0; color: #5f6368; }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div class="panel">
   <h1>Thailand Boundary POC</h1>
-  <div class="src">GISTDA — Hosted/Province_TH/FeatureServer/0 (EPSG:4326)</div>
-  <div id="result" class="result muted">กำลังโหลดขอบเขต…</div>
-  <div id="detail" class="muted"></div>
-  <label>ความละเอียด (maxAllowableOffset, องศา)
-    <select id="offset">
-      <option value="0.01">0.01 — เร็ว (~150 KB)</option>
-      <option value="0.002" selected>0.002 — สมดุล (~580 KB)</option>
-      <option value="0">0 — เต็มความละเอียด (~39 MB)</option>
+  <div class="src">GISTDA — Hosted/Province_TH/FeatureServer/0 · EPSG:4326</div>
+
+  <div id="alert" class="alert"></div>
+
+  <label>แหล่งข้อมูล
+    <select id="source">
+      <option value="repo" selected>ไฟล์ในรีโป — simplified (~584 KB, เร็ว)</option>
+      <option value="repo-full">ไฟล์ในรีโป — เต็มความละเอียด (39 MB)</option>
+      <option value="live:0.01">GISTDA สด — ย่อ 0.01° (~150 KB)</option>
+      <option value="live:0.002">GISTDA สด — ย่อ 0.002° (~580 KB)</option>
+      <option value="live:0">GISTDA สด — เต็มความละเอียด (39 MB)</option>
     </select>
   </label>
-  <label>หรือใช้ไฟล์ที่ดาวน์โหลดเอง (.geojson)
+  <label>หรือเลือกไฟล์จากเครื่อง (.geojson)
     <input type="file" id="file" accept=".geojson,.json" />
   </label>
-  <div class="src" style="margin-top:8px">คลิกบนแผนที่เพื่อตรวจว่าพิกัดอยู่ในจังหวัดใด</div>
+
+  <label style="display:flex;gap:6px;align-items:center">
+    <input type="checkbox" id="marine" style="width:auto" /> แสดงขอบเขตทางทะเล
+  </label>
+  <div id="legend" class="src" style="display:none;margin-top:6px"></div>
+
+  <div id="result" class="result muted">กำลังโหลด…</div>
+  <div id="detail" class="src" style="margin-top:4px"></div>
+  <div class="src">คลิกบนแผนที่เพื่อตรวจว่าพิกัดอยู่ในจังหวัดใด / เขตทางทะเลใด</div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const QUERY = "https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/Province_TH/FeatureServer/0/query" +
-  "?where=1%3D1&outFields=p_code,p_name_t,p_name_e&returnGeometry=true&outSR=4326&f=geojson";
+const LAYER = "https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/Province_TH/FeatureServer/0/query";
+const FIELDS = "outFields=p_code,p_name_t,p_name_e&returnGeometry=true&outSR=4326&f=geojson";
+const REPO = { repo: "thailand_provinces_simplified.geojson", "repo-full": "thailand_provinces_full.geojson" };
+
+// ลายนิ้วมือของข้อมูล GISTDA ตอนที่ดาวน์โหลดไฟล์ในรีโป (25 ส.ค. 2026)
+// layer ไม่มี editingInfo / source_dat (ว่างทั้งคู่) และ portal item endpoint ไม่ส่ง CORS
+// จึงใช้ count + sum(SHAPE__Length) + sum(SHAPE__Area) เป็นตัวเทียบว่าต้นทางถูกแก้หรือยัง
+const SNAPSHOT = { n: 77, len: 46510137.83032429, area: 559709063563.251 };
+const SNAPSHOT_DATE = "25 ส.ค. 2026";
+const STATS = [
+  { statisticType: "count", onStatisticField: "objectid", outStatisticFieldName: "n" },
+  { statisticType: "sum", onStatisticField: "SHAPE__Length", outStatisticFieldName: "len" },
+  { statisticType: "sum", onStatisticField: "SHAPE__Area", outStatisticFieldName: "area" },
+];
+
+// เขตทางทะเลของไทย — GISTDA/Hosted/L13_MarineZone (13 polygon, ~54 KB ที่ offset 0.002)
+const MARINE = "https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/L13_MarineZone_GISTDA_xxk_Yxxx/FeatureServer/0/query"
+  + "?where=1%3D1&outFields=name_th,name_eng&returnGeometry=true&outSR=4326&maxAllowableOffset=0.002&f=geojson";
+// เรียงจากในสุดออกนอกสุด — ใช้ทั้งเป็นสีและเป็นลำดับความสำคัญตอนตอบว่าจุดอยู่เขตไหน
+const ZONES = [
+  ["Internal Water", "น่านน้ำภายใน", "#0b5394"],
+  ["Territorial Sea", "ทะเลอาณาเขต (12 ไมล์ทะเล)", "#1a73e8"],
+  ["Contiguous Zone", "เขตต่อเนื่อง (24 ไมล์ทะเล)", "#12a4a4"],
+  ["Exclusive Economic Zone", "เขตเศรษฐกิจจำเพาะ (200 ไมล์ทะเล)", "#7cb342"],
+  ["Thailand-Malaysia Joint Development Area", "พื้นที่พัฒนาร่วม ไทย-มาเลเซีย", "#f9ab00"],
+];
+const zoneColor = en => (ZONES.find(z => z[0] === en) || [,, "#666"])[2];
+const zoneRank = en => { const i = ZONES.findIndex(z => z[0] === en); return i < 0 ? 99 : i; };
 
 const map = L.map("map").setView([13.0, 101.0], 6);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19, attribution: "&copy; OpenStreetMap | ขอบเขต: GISTDA"
 }).addTo(map);
 
-const result = document.getElementById("result");
-const detail = document.getElementById("detail");
+const $ = id => document.getElementById(id);
 let layer = null, features = [], marker = null;
+let marineLayer = null, marineFeatures = [];
 
+// ---------- point in polygon ----------
 // ray casting; ring[0] = outer, ring[1..] = holes
 const inRing = ([x, y], ring) => {
   let hit = false;
@@ -69,59 +114,132 @@ const inGeometry = (pt, g) =>
   g.type === "Polygon" ? inPolygon(pt, g.coordinates)
                        : g.coordinates.some(p => inPolygon(pt, p));
 
+// ---------- staleness check ----------
+// 1e-12 = เผื่อ noise ของ float ล้วน ๆ (พื้นที่ 5.6e11 → เผื่อ ~0.5 ตร.ม.) การแก้ขอบเขตจริงเปลี่ยนมากกว่านี้เสมอ
+const near = (a, b) => Math.abs(a - b) <= Math.abs(b) * 1e-12;
+const sameAsSnapshot = s => s.n === SNAPSHOT.n && near(s.len, SNAPSHOT.len) && near(s.area, SNAPSHOT.area);
+
+function showAlert(kind, html) { $("alert").className = "alert " + kind; $("alert").innerHTML = html; }
+
+async function checkFreshness() {
+  let s;
+  try {
+    const url = `${LAYER}?where=1%3D1&f=json&outStatistics=${encodeURIComponent(JSON.stringify(STATS))}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    s = data.features && data.features[0] && data.features[0].attributes;
+    if (!s) throw new Error(data.error ? data.error.message : "ไม่มีข้อมูลสถิติกลับมา");
+  } catch (err) {
+    showAlert("unknown", `⚪ ตรวจสอบความใหม่ของข้อมูล GISTDA ไม่ได้ — ${err.message}`);
+    return;
+  }
+  if (sameAsSnapshot(s)) {
+    showAlert("same", `✅ GISTDA ตรงกับไฟล์ในรีโป (snapshot ${SNAPSHOT_DATE}) — 77 จังหวัด ไม่มีการแก้ขอบเขต`);
+  } else {
+    showAlert("stale", `⚠️ <b>GISTDA มีข้อมูลใหม่กว่าไฟล์ในรีโป</b> (snapshot ${SNAPSHOT_DATE})<br>` +
+      `จังหวัด ${SNAPSHOT.n} → <b>${s.n}</b> · เส้นรอบรวม ${SNAPSHOT.len.toFixed(0)} → <b>${Number(s.len).toFixed(0)}</b> · พื้นที่รวม ${SNAPSHOT.area.toFixed(0)} → <b>${Number(s.area).toFixed(0)}</b><br>` +
+      `เลือก "GISTDA สด" เพื่อดูข้อมูลล่าสุด แล้วอัปเดตไฟล์ในรีโป`);
+  }
+}
+
+// ---------- render ----------
 function render(geojson, label) {
-  features = geojson.features || [geojson];
+  features = (geojson.features || [geojson]).filter(f => f.geometry);
   if (layer) layer.remove();
   layer = L.geoJSON(geojson, {
     style: { color: "#1a73e8", weight: 1, fillColor: "#1a73e8", fillOpacity: 0.08 }
   }).addTo(map);
   map.fitBounds(layer.getBounds());
-  result.className = "result muted";
-  result.textContent = "พร้อมใช้งาน — คลิกบนแผนที่";
-  detail.textContent = `${features.length} จังหวัด · ${label}`;
+  $("result").className = "result muted";
+  $("result").textContent = "พร้อมใช้งาน — คลิกบนแผนที่";
+  $("detail").textContent = `${features.length} จังหวัด · ${label}`;
 }
 
-async function load(offset) {
-  result.className = "result muted";
-  result.textContent = "กำลังโหลดขอบเขต…";
-  const url = QUERY + (Number(offset) > 0 ? "&maxAllowableOffset=" + offset : "");
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  render(data, `GISTDA live (offset ${offset})`);
+function fail(msg, hint) {
+  $("result").className = "result out";
+  $("result").textContent = "โหลดไม่สำเร็จ: " + msg;
+  $("detail").textContent = hint || "";
 }
 
+async function load(value) {
+  $("result").className = "result muted";
+  $("result").textContent = "กำลังโหลด…";
+  $("detail").textContent = "";
+  try {
+    if (value in REPO) {
+      const res = await fetch(REPO[value]);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      render(await res.json(), `ไฟล์ในรีโป: ${REPO[value]}`);
+    } else {
+      const offset = value.split(":")[1];
+      const url = `${LAYER}?where=1%3D1&${FIELDS}` + (Number(offset) > 0 ? "&maxAllowableOffset=" + offset : "");
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      render(data, `GISTDA สด (offset ${offset})`);
+    }
+  } catch (err) {
+    fail(err.message, value in REPO
+      ? "เปิดจาก file:// จะอ่านไฟล์ข้างๆ ไม่ได้ (CORS) — เปิดผ่าน GitHub Pages หรือเลือกไฟล์จากเครื่องด้านบน"
+      : "GISTDA อาจล่ม — สลับไปใช้ไฟล์ในรีโปแทน");
+  }
+}
+
+// ---------- marine zones ----------
+async function toggleMarine(on) {
+  if (marineLayer) marineLayer.remove();
+  marineLayer = null; marineFeatures = [];
+  $("legend").style.display = on ? "block" : "none";
+  if (!on) return;
+  $("legend").textContent = "กำลังโหลดขอบเขตทางทะเล…";
+  try {
+    const res = await fetch(MARINE);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    marineFeatures = (data.features || []).filter(f => f.geometry);
+    marineLayer = L.geoJSON(data, {
+      style: f => ({ color: zoneColor(f.properties.name_eng), weight: 1, dashArray: "4 3",
+                     fillColor: zoneColor(f.properties.name_eng), fillOpacity: 0.1 })
+    }).addTo(map);
+    $("legend").innerHTML = ZONES.map(([, th, c]) =>
+      `<span style="display:inline-block;width:9px;height:9px;background:${c};margin-right:5px"></span>${th}`
+    ).join("<br>");
+  } catch (err) {
+    $("marine").checked = false;
+    $("legend").textContent = "โหลดขอบเขตทางทะเลไม่สำเร็จ: " + err.message;
+  }
+}
+
+// ---------- click check ----------
 function check(latlng) {
   const pt = [latlng.lng, latlng.lat];
-  const hit = features.find(f => f.geometry && inGeometry(pt, f.geometry));
+  const hit = features.find(f => inGeometry(pt, f.geometry));
+  const zones = marineFeatures.filter(f => inGeometry(pt, f.geometry)).map(f => f.properties)
+    .sort((a, b) => zoneRank(a.name_eng) - zoneRank(b.name_eng));
+  const ok = hit || zones.length;
   if (marker) marker.remove();
-  marker = L.circleMarker(latlng, {
-    radius: 6, color: hit ? "#137333" : "#b3261e", fillOpacity: 1
-  }).addTo(map);
-  result.className = "result " + (hit ? "in" : "out");
-  result.textContent = hit ? "อยู่ในประเทศไทย ✓" : "อยู่นอกขอบเขต ✗";
+  marker = L.circleMarker(latlng, { radius: 6, color: ok ? "#137333" : "#b3261e", fillOpacity: 1 }).addTo(map);
+  $("result").className = "result " + (ok ? "in" : "out");
+  $("result").textContent = hit ? "อยู่ในประเทศไทย ✓ (บนบก)"
+    : zones.length ? `อยู่ใน${zones[0].name_th} ✓` : "อยู่นอกขอบเขต ✗";
   const p = hit && hit.properties;
-  detail.textContent =
-    `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}` +
-    (p ? ` · ${p.p_name_t || ""} (${p.p_name_e || ""}) · code ${p.p_code}` : "");
+  $("detail").textContent = `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}` +
+    (p ? ` · ${p.p_name_t || ""} (${p.p_name_e || ""}) · code ${p.p_code}` : "") +
+    (zones.length ? ` · ทะเล: ${zones.map(z => z.name_th).join(", ")}` : "");
 }
 
 map.on("click", e => features.length && check(e.latlng));
-
-document.getElementById("offset").onchange = e =>
-  load(e.target.value).catch(err => {
-    result.className = "result out";
-    result.textContent = "โหลดไม่สำเร็จ: " + err.message;
-    detail.textContent = "ลองดาวน์โหลด GeoJSON แล้วเลือกไฟล์ด้านล่างแทน";
-  });
-
-document.getElementById("file").onchange = async e => {
+$("source").onchange = e => load(e.target.value);
+$("marine").onchange = e => toggleMarine(e.target.checked);
+$("file").onchange = async e => {
   const f = e.target.files[0];
-  if (f) render(JSON.parse(await f.text()), "local file: " + f.name);
+  if (f) render(JSON.parse(await f.text()), "ไฟล์จากเครื่อง: " + f.name);
 };
 
-document.getElementById("offset").onchange({ target: { value: "0.002" } });
+load($("source").value);
+checkFreshness();
 </script>
 </body>
 </html>
