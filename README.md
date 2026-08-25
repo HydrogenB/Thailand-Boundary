@@ -2,6 +2,25 @@
 
 ไฟล์ GeoJSON ขอบเขตประเทศไทยพร้อมใช้ — **77 จังหวัด** และ **เขตทางทะเล** (น่านน้ำภายใน, ทะเลอาณาเขต 12 ไมล์ทะเล, เขตต่อเนื่อง 24 ไมล์ทะเล, เขตเศรษฐกิจจำเพาะ/EEZ 200 ไมล์ทะเล, พื้นที่พัฒนาร่วมไทย-มาเลเซีย) ข้อมูลจาก **GISTDA** ใช้ทำ **geofence / point-in-polygon** เช็คว่าพิกัด lat-lng อยู่ในประเทศไทยหรือจังหวัดใด สำหรับกันการส่ง report จากนอกประเทศ, ตรวจพื้นที่ให้บริการ, หรือวาดแผนที่ไทย
 
+## ลิงก์
+
+- **ดู POC (แผนที่คลิกทดสอบพิกัด):** https://hydrogenb.github.io/Thailand-Boundary/thailand_gistda_boundary_poc.html
+- **โหลด JSON ตรง ๆ** (ใส่ใน `fetch`/`curl` ได้เลย):
+  - จังหวัด ย่อ 584 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_provinces_simplified.geojson
+  - จังหวัด เต็ม 39 MB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_provinces_full.geojson
+  - เขตทางทะเล 54 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_maritime_zones.geojson
+- **ดึงจาก GISTDA เองแบบสด** (ปรับ field/ความละเอียดเองได้ ไม่ต้องผ่านรีโปนี้):
+  - จังหวัด — [Province_TH/FeatureServer/0](https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/Province_TH/FeatureServer/0)
+  - เขตทางทะเล — [L13_MarineZone/FeatureServer/0](https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/L13_MarineZone_GISTDA_xxk_Yxxx/FeatureServer/0)
+  - ชั้นข้อมูลทั้งหมด 2,000+ ชั้น — [ArcGIS services directory ของ GISTDA](https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted)
+  - วิธีเขียน query (`where`, `outFields`, `maxAllowableOffset`, `f=geojson`) — [ArcGIS REST API: Query (Feature Service)](https://developers.arcgis.com/rest/services-reference/enterprise/query-feature-service-layer/)
+
+ตัวอย่างดึงสดเป็น GeoJSON ย่อ 0.002°:
+
+```bash
+curl "https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/Province_TH/FeatureServer/0/query?where=1%3D1&outFields=p_code,p_name_t,p_name_e&returnGeometry=true&outSR=4326&maxAllowableOffset=0.002&f=geojson" -o provinces.geojson
+```
+
 ## ไฟล์
 
 | ไฟล์ | ขนาด | คำอธิบาย |
