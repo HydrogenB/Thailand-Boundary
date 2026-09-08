@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Thailand Boundary POC — GISTDA Province_TH</title>
+<title>Thailand Boundary POC — จังหวัด / ขอบประเทศ / พื้นที่ชายแดน</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   html, body { height: 100%; margin: 0; font-family: system-ui, "Segoe UI", sans-serif; }
@@ -26,6 +26,27 @@
   .alert.stale { display: block; background: #fef7e0; border: 1px solid #f0c000; color: #7a5900; }
   .alert.same  { display: block; background: #e6f4ea; border: 1px solid #a8d5b5; color: #137333; }
   .alert.unknown { display: block; background: #f1f3f4; border: 1px solid #dadce0; color: #5f6368; }
+  .panel { max-height: calc(100% - 24px); overflow: auto; }
+  .layers { margin-top: 8px; border-top: 1px solid #eee; padding-top: 6px; }
+  .layers label { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+  .layers input[type=checkbox] { width: auto; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+  .km { display: flex; gap: 6px; align-items: center; margin-top: 6px; color: #444; }
+  .km input { width: 64px; }
+  .warn { color: #b06000; font-weight: 700; }
+  textarea { width: 100%; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid #ccc; background: #f8f9fa; cursor: pointer; }
+  button:hover { background: #eef1f4; }
+  .summary { margin-top: 8px; font-size: 12px; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .pill.border { background: #fef0e0; color: #b06000; }
+  .pill.inland { background: #e6f4ea; color: #137333; }
+  .pill.outside { background: #fce8e6; color: #b3261e; }
+  table.res { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 11px; }
+  table.res th, table.res td { border-bottom: 1px solid #eee; padding: 3px 4px; text-align: left; vertical-align: top; }
+  table.res th { color: #666; font-weight: 600; }
+  table.res tr.hit { background: #fffaf2; }
+  table.res td.num { text-align: right; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -49,14 +70,35 @@
     <input type="file" id="file" accept=".geojson,.json" />
   </label>
 
-  <label style="display:flex;gap:6px;align-items:center">
-    <input type="checkbox" id="marine" style="width:auto" /> แสดงขอบเขตทางทะเล
-  </label>
+  <div class="layers">
+    <label><input type="checkbox" id="marine" /> เขตทางทะเล (GISTDA สด)</label>
+    <label><input type="checkbox" id="outline" checked />
+      <span class="swatch" style="background:#5f6368"></span> เส้นขอบนอกประเทศ (dissolve 77 จังหวัด)</label>
+    <label><input type="checkbox" id="borderline" checked />
+      <span class="swatch" style="background:#b3261e"></span> แนวชายแดนทางบก (5,697 กม. / 31 จังหวัด)</label>
+    <label><input type="checkbox" id="zone" checked />
+      <span class="swatch" style="background:#f9ab00"></span> พื้นที่ชายแดน 3.5 กม. (17,088 ตร.กม.)</label>
+    <div class="km">รัศมีพื้นที่ชายแดนที่ใช้ตัดสิน
+      <input type="number" id="km" value="3.5" min="0" max="50" step="0.5" /> กม.
+    </div>
+  </div>
+
+  <div class="layers">
+    <b>ตรวจพิกัดเป็นชุด</b>
+    <div class="src" style="margin:2px 0 4px">1 บรรทัด = <code>lat, lng, ชื่อ</code> — ใช้ทดสอบว่าพิกัดที่ระบบรับเข้ามาอยู่ในพื้นที่ชายแดนหรือไม่</div>
+    <textarea id="batch" rows="6" spellcheck="false"></textarea>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <button id="run" type="button">ตรวจทั้งหมด</button>
+      <button id="reset" type="button">ล้างผล</button>
+    </div>
+    <div id="summary" class="summary"></div>
+    <div id="table"></div>
+  </div>
   <div id="legend" class="src" style="display:none;margin-top:6px"></div>
 
   <div id="result" class="result muted">กำลังโหลด…</div>
   <div id="detail" class="src" style="margin-top:4px"></div>
-  <div class="src">คลิกบนแผนที่เพื่อตรวจว่าพิกัดอยู่ในจังหวัดใด / เขตทางทะเลใด</div>
+  <div class="src">คลิกบนแผนที่เพื่อตรวจว่าพิกัดอยู่ในจังหวัดใด / เขตทางทะเลใด / ห่างแนวชายแดนกี่ กม.</div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -95,9 +137,18 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19, attribution: "&copy; OpenStreetMap | ขอบเขต: GISTDA"
 }).addTo(map);
 
+// ชั้นข้อมูลที่ derive จากไฟล์ในรีโป (สร้างด้วย build_border_geojson.py — ไม่ใช้ข้อมูลนอกรีโป)
+const DERIVED = {
+  outline:    { file: "thailand_outline.geojson",           style: { color: "#5f6368", weight: 2, fill: false } },
+  borderline: { file: "thailand_border_line.geojson",       style: { color: "#b3261e", weight: 3, fill: false } },
+  zone:       { file: "thailand_border_zone_3_5km.geojson", style: { color: "#f9ab00", weight: 1, fillColor: "#f9ab00", fillOpacity: 0.35 } },
+};
+
 const $ = id => document.getElementById(id);
 let layer = null, features = [], marker = null;
 let marineLayer = null, marineFeatures = [];
+const derivedLayers = {};        // id -> L.GeoJSON
+let borderLines = [];            // เส้นชายแดน + bbox ไว้คำนวณระยะตอนคลิก
 
 // ---------- point in polygon ----------
 // ray casting; ring[0] = outer, ring[1..] = holes
@@ -113,6 +164,77 @@ const inPolygon = (pt, poly) => inRing(pt, poly[0]) && !poly.slice(1).some(h => 
 const inGeometry = (pt, g) =>
   g.type === "Polygon" ? inPolygon(pt, g.coordinates)
                        : g.coordinates.some(p => inPolygon(pt, p));
+
+// ---------- ระยะจากจุดถึงแนวชายแดน (สูตรเดียวกับ geofence.js) ----------
+const M_PER_DEG_LAT = 110574;
+const mPerDegLng = lat => 111320 * Math.cos((lat * Math.PI) / 180);
+const segDist = (px, py, ax, ay, bx, by) => {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+};
+const prepLines = feats => feats.map(f => {
+  const g = f.geometry;
+  const lines = g.type === "LineString" ? [g.coordinates] : g.coordinates;
+  let minX = 180, minY = 90, maxX = -180, maxY = -90;
+  for (const l of lines) for (const [x, y] of l) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  return { lines, bbox: [minX, minY, maxX, maxY], props: f.properties };
+});
+function borderDistance(lat, lng) {
+  if (!borderLines.length) return null;
+  const kx = mPerDegLng(lat), ky = M_PER_DEG_LAT;
+  const px = lng * kx, py = lat * ky;
+  let best = Infinity, at = null;
+  for (const { lines, bbox, props } of borderLines) {
+    const gapX = Math.max(bbox[0] - lng, lng - bbox[2], 0) * kx;
+    const gapY = Math.max(bbox[1] - lat, lat - bbox[3], 0) * ky;
+    if (Math.hypot(gapX, gapY) >= best) continue;
+    for (const line of lines) for (let i = 1; i < line.length; i++) {
+      const d = segDist(px, py, line[i - 1][0] * kx, line[i - 1][1] * ky,
+                                line[i][0] * kx, line[i][1] * ky);
+      if (d < best) { best = d; at = props; }
+    }
+  }
+  return best === Infinity ? null : { km: best / 1000, props: at };
+}
+
+// ---------- ชั้นข้อมูลที่ derive แล้ว ----------
+async function toggleDerived(id, on) {
+  if (derivedLayers[id]) { derivedLayers[id].remove(); delete derivedLayers[id]; }
+  if (!on) { if (id === "borderline") borderLines = []; return; }
+  const { file, style } = DERIVED[id];
+  try {
+    const res = await fetch(file);
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    derivedLayers[id] = L.geoJSON(data, {
+      style,
+      onEachFeature: (f, lyr) => {
+        const p = f.properties || {};
+        if (p.p_name_t) lyr.bindTooltip(
+          `${p.p_name_t}${p.length_km ? ` · ชายแดน ${p.length_km} กม.` : ""}` +
+          `${p.area_km2 ? ` · พื้นที่ชายแดน ${p.area_km2} ตร.กม.` : ""}`, { sticky: true });
+      },
+    }).addTo(map);
+    if (id === "borderline") borderLines = prepLines((data.features || []).filter(f => f.geometry));
+    restack();
+  } catch (err) {
+    $(id).checked = false;
+    fail(`โหลด ${file} ไม่ได้: ${err.message}`,
+         "ไฟล์ derive อยู่ในรีโป — เปิดผ่าน http:// (GitHub Pages หรือ python -m http.server)");
+  }
+}
+
+// พื้นที่ชายแดนเป็น fill ทึบ ถ้าวางทับเส้นจะบังกัน — จัดลำดับใหม่ทุกครั้งที่เปิด/ปิดชั้น
+function restack() {
+  if (derivedLayers.zone) derivedLayers.zone.bringToBack();
+  if (derivedLayers.outline) derivedLayers.outline.bringToFront();
+  if (derivedLayers.borderline) derivedLayers.borderline.bringToFront();
+}
 
 // ---------- staleness check ----------
 // 1e-12 = เผื่อ noise ของ float ล้วน ๆ (พื้นที่ 5.6e11 → เผื่อ ~0.5 ตร.ม.) การแก้ขอบเขตจริงเปลี่ยนมากกว่านี้เสมอ
@@ -219,26 +341,139 @@ function check(latlng) {
   const zones = marineFeatures.filter(f => inGeometry(pt, f.geometry)).map(f => f.properties)
     .sort((a, b) => zoneRank(a.name_eng) - zoneRank(b.name_eng));
   const ok = hit || zones.length;
+  const limit = Number($("km").value) || 0;
+  const near = hit ? borderDistance(latlng.lat, latlng.lng) : null;
+  const inBorderZone = near && near.km <= limit;
   if (marker) marker.remove();
-  marker = L.circleMarker(latlng, { radius: 6, color: ok ? "#137333" : "#b3261e", fillOpacity: 1 }).addTo(map);
+  marker = L.circleMarker(latlng, {
+    radius: 6, color: inBorderZone ? "#e8710a" : ok ? "#137333" : "#b3261e", fillOpacity: 1
+  }).addTo(map);
   $("result").className = "result " + (ok ? "in" : "out");
-  $("result").textContent = hit ? "อยู่ในประเทศไทย ✓ (บนบก)"
-    : zones.length ? `อยู่ใน${zones[0].name_th} ✓` : "อยู่นอกขอบเขต ✗";
+  $("result").innerHTML = (hit ? "อยู่ในประเทศไทย ✓ (บนบก)"
+    : zones.length ? `อยู่ใน${zones[0].name_th} ✓` : "อยู่นอกขอบเขต ✗")
+    + (inBorderZone ? `<br><span class="warn">⚠ อยู่ในพื้นที่ชายแดน ≤ ${limit} กม.</span>` : "");
   const p = hit && hit.properties;
   $("detail").textContent = `${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}` +
     (p ? ` · ${p.p_name_t || ""} (${p.p_name_e || ""}) · code ${p.p_code}` : "") +
-    (zones.length ? ` · ทะเล: ${zones.map(z => z.name_th).join(", ")}` : "");
+    (zones.length ? ` · ทะเล: ${zones.map(z => z.name_th).join(", ")}` : "") +
+    (near ? ` · ห่างแนวชายแดน ${near.km.toFixed(2)} กม.` +
+            (near.props && near.props.p_name_t ? ` (ด้าน${near.props.p_name_t})` : "") : "") +
+    (hit && !borderLines.length ? " · เปิดชั้น \u201Cแนวชายแดน\u201D เพื่อวัดระยะถึงชายแดน" : "");
+}
+
+// ---------- ตรวจพิกัดเป็นชุด ----------
+// POC ของงานแบบ "พิกัดที่รายงานเข้ามาอยู่ในพื้นที่ชายแดนไหม" — วางลิสต์พิกัดแล้วได้ผลทีเดียวทั้งชุด
+const SAMPLES = [
+  "20.4433, 99.8797, แม่สาย เชียงราย",
+  "16.7128, 98.5075, แม่สอด ตาก",
+  "17.8782, 102.7418, เมืองหนองคาย",
+  "6.0246, 101.9686, สุไหงโก-ลก นราธิวาส",
+  "13.6929, 102.5169, อรัญประเทศ สระแก้ว",
+  "5.7756, 101.0712, เบตง ยะลา",
+  "18.7883, 98.9853, เมืองเชียงใหม่",
+  "13.7563, 100.5018, กรุงเทพ",
+  "7.8804, 98.3923, ภูเก็ต",
+  "12.5000, 100.5000, กลางอ่าวไทย",
+  "11.5564, 104.9282, พนมเปญ",
+].join("\n");
+
+let batchLayer = null, repoMarine = [];
+
+// ชั้นทะเลสำหรับตอนตรวจเป็นชุด — อ่านจากไฟล์ในรีโป จะได้ไม่ต้องพึ่ง GISTDA สด
+async function ensureMarine() {
+  if (marineFeatures.length || repoMarine.length) return;
+  try {
+    const res = await fetch("thailand_maritime_zones.geojson");
+    if (res.ok) repoMarine = ((await res.json()).features || []).filter(f => f.geometry);
+  } catch { /* ไม่มีก็ตอบได้แค่ว่าอยู่นอกแผ่นดิน */ }
+}
+
+function classify(lat, lng, limit) {
+  const pt = [lng, lat];
+  const prov = features.find(f => inGeometry(pt, f.geometry));
+  if (!prov) {
+    const src = marineFeatures.length ? marineFeatures : repoMarine;
+    const sea = src.filter(f => inGeometry(pt, f.geometry)).map(f => f.properties)
+      .sort((a, b) => zoneRank(a.name_eng) - zoneRank(b.name_eng));
+    return { status: "outside", where: sea.length ? sea[0].name_th : "นอกขอบเขตประเทศไทย", km: null };
+  }
+  const near = borderDistance(lat, lng);
+  const km = near ? near.km : null;
+  return {
+    status: km !== null && km <= limit ? "border" : "inland",
+    where: prov.properties.p_name_t || "",
+    km,
+  };
+}
+
+const STATUS = {
+  border:  { label: "พื้นที่ชายแดน", color: "#e8710a" },
+  inland:  { label: "ในประเทศ",     color: "#137333" },
+  outside: { label: "นอกประเทศ",    color: "#b3261e" },
+};
+
+async function runBatch() {
+  if (!features.length) return;
+  await ensureMarine();
+  const limit = Number($("km").value) || 0;
+  const rows = $("batch").value.split("\n").map(l => l.trim()).filter(Boolean).map(line => {
+    const [a, b, ...rest] = line.split(",");
+    const lat = Number(a), lng = Number(b);
+    if (!isFinite(lat) || !isFinite(lng)) return { bad: line };
+    return { lat, lng, label: rest.join(",").trim(), ...classify(lat, lng, limit) };
+  });
+
+  if (batchLayer) batchLayer.remove();
+  batchLayer = L.layerGroup(rows.filter(r => !r.bad).map(r =>
+    L.circleMarker([r.lat, r.lng], {
+      radius: 6, weight: 2, color: "#fff", fillColor: STATUS[r.status].color, fillOpacity: 1,
+    }).bindTooltip(`${r.label || ""} — ${STATUS[r.status].label}` +
+      (r.km !== null && r.km !== undefined ? ` (${r.km.toFixed(2)} กม.)` : ""))
+  )).addTo(map);
+
+  const n = k => rows.filter(r => r.status === k).length;
+  $("summary").innerHTML =
+    `<span class="pill border">พื้นที่ชายแดน ${n("border")}</span> ` +
+    `<span class="pill inland">ในประเทศ ${n("inland")}</span> ` +
+    `<span class="pill outside">นอกประเทศ ${n("outside")}</span> · รัศมี ${limit} กม.`;
+
+  $("table").innerHTML =
+    `<table class="res"><tr><th>พิกัด / ชื่อ</th><th>พื้นที่</th><th class="num">ถึงชายแดน</th><th>ผล</th></tr>` +
+    rows.map(r => r.bad
+      ? `<tr><td colspan="4">อ่านไม่ออก: ${esc(r.bad)}</td></tr>`
+      : `<tr class="${r.status === "border" ? "hit" : ""}">` +
+        `<td>${esc(r.label || `${r.lat}, ${r.lng}`)}</td>` +
+        `<td>${esc(r.where)}</td>` +
+        `<td class="num">${r.km === null || r.km === undefined ? "—" : r.km.toFixed(2) + " กม."}</td>` +
+        `<td style="color:${STATUS[r.status].color};font-weight:700">${STATUS[r.status].label}</td></tr>`
+    ).join("") + "</table>";
+
+  const pts = rows.filter(r => !r.bad).map(r => [r.lat, r.lng]);
+  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.2));
+}
+
+const esc = t => String(t).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+
+function resetBatch() {
+  if (batchLayer) { batchLayer.remove(); batchLayer = null; }
+  $("summary").innerHTML = ""; $("table").innerHTML = "";
 }
 
 map.on("click", e => features.length && check(e.latlng));
 $("source").onchange = e => load(e.target.value);
 $("marine").onchange = e => toggleMarine(e.target.checked);
+for (const id of Object.keys(DERIVED)) $(id).onchange = e => toggleDerived(id, e.target.checked);
 $("file").onchange = async e => {
   const f = e.target.files[0];
   if (f) render(JSON.parse(await f.text()), "ไฟล์จากเครื่อง: " + f.name);
 };
 
+$("run").onclick = runBatch;
+$("reset").onclick = resetBatch;
+$("batch").value = SAMPLES;
+
 load($("source").value);
+for (const id of Object.keys(DERIVED)) if ($(id).checked) toggleDerived(id, true);
 checkFreshness();
 </script>
 </body>
