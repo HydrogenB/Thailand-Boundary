@@ -6,7 +6,8 @@
   - thailand_maritime_zones.geojson  (เขตทางทะเล — ใช้แยกว่าเส้นไหนคือชายฝั่ง)
 
 ผลลัพธ์
-  - thailand_outline.geojson          เส้นขอบนอกประเทศ (รวมจังหวัดเป็นก้อนเดียว)
+  - thailand_outline.geojson          เส้นขอบนอกประเทศ เฉพาะแผ่นดิน (รวมจังหวัดเป็นก้อนเดียว)
+  - thailand_outline_with_sea.geojson เส้นขอบนอกประเทศ รวมเขตทางทะเล (ไม่รวมพื้นที่พัฒนาร่วมไทย-มาเลเซีย)
   - thailand_coastline.geojson        แนวชายฝั่งทะเล (แยกจังหวัด)
   - thailand_border_line.geojson      แนวชายแดนทางบก (แยกจังหวัด)
   - thailand_border_zone_3_5km.geojson  พื้นที่ในไทยห่างจากแนวชายแดน <= 3.5 กม. (ปรับด้วย --km) (แยกจังหวัด)
@@ -25,7 +26,7 @@
 import argparse, json, os
 import numpy as np
 import shapely
-from shapely.geometry import shape, mapping, MultiLineString, LineString
+from shapely.geometry import shape, mapping, MultiLineString, LineString, Polygon
 from shapely.ops import unary_union, transform, linemerge
 from shapely.strtree import STRtree
 from pyproj import Transformer
@@ -40,11 +41,27 @@ MIN_COMPONENT = 20_000.0                   # ม. — ความยาวข�
 SIMPLIFY = 150.0                           # ม. — ย่อรูปก่อนเขียนไฟล์
 MIN_SEG = 200.0                            # ม. — ตัดเศษเส้นสั้นกว่านี้ทิ้ง
 
+# เขตทางทะเลที่ไม่นับเป็นขอบนอกของไทยในไฟล์ outline_with_sea (พื้นที่ทับซ้อน/พัฒนาร่วม)
+EXCLUDE_ZONES = ("Thailand-Malaysia Joint Development Area",)
+
+# รูตามขอบระหว่าง polygon ต้นทาง (จังหวัดชนกัน / ทะเลกับชายฝั่งไม่สนิท) เล็กกว่านี้ = artifact ถมทิ้ง
+# ตั้งไว้สูงกว่ารูจริงที่เจอ (~10 ตร.กม.) แต่ต่ำกว่าพื้นที่ที่ตัดออกจริง (JDA 7,167 ตร.กม.) เผื่อวันหน้ามันกลายเป็นรูปิด
+MAX_ARTIFACT_HOLE = 50e6   # ตร.ม.
+
 
 def fc(features):
     return {"type": "FeatureCollection",
             "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
             "features": features}
+
+
+def fill_artifact_holes(geom, max_hole=MAX_ARTIFACT_HOLE):
+    """ถมรูเล็ก ๆ ที่เกิดจากการ union polygon ต้นทางที่ขอบไม่สนิท — ขอบนอกประเทศไม่ควรมีรูพรุน"""
+    out = []
+    for poly in getattr(geom, "geoms", [geom]):
+        keep = [r for r in poly.interiors if Polygon(r).area > max_hole]
+        out.append(Polygon(poly.exterior, keep))
+    return unary_union(out)
 
 
 def round_geom(geom, nd=5):
@@ -135,18 +152,46 @@ def main(km):
 
     # ---- 1) เส้นขอบนอกประเทศ (dissolve 77 จังหวัด) ----
     print("รวมจังหวัดเป็นขอบประเทศ …")
-    parts = sorted(getattr(land, "geoms", [land]), key=lambda p: -p.area)
+    land_outline = fill_artifact_holes(land)
+    parts = sorted(getattr(land_outline, "geoms", [land_outline]), key=lambda p: -p.area)
     write("thailand_outline.geojson", [{
         "type": "Feature",
         "properties": {
             "name_th": "ประเทศไทย", "name_en": "Thailand", "iso": "TH",
             "source": "GISTDA Province_TH (dissolved 77 provinces)",
             "parts": len(parts),
-            "area_km2": round(land.area / 1e6, 1),
-            "perimeter_km": round(land.length / 1000, 1),
+            "area_km2": round(land_outline.area / 1e6, 1),
+            "perimeter_km": round(land_outline.length / 1000, 1),
             "simplify_m": SIMPLIFY,
         },
-        "geometry": to_out(land)}])
+        "geometry": to_out(land_outline)}])
+
+    # ---- 1b) ขอบนอกประเทศ รวมเขตทางทะเล ----
+    print("รวมแผ่นดิน + เขตทางทะเล …")
+    keep, drop = [], []
+    for f in sea:
+        g = transform(FWD, shape(f["geometry"])).buffer(0)
+        (drop if f["properties"].get("name_eng") in EXCLUDE_ZONES else keep).append(g)
+    with_sea = unary_union([land] + keep)
+    if drop:
+        with_sea = with_sea.difference(unary_union(drop))
+    with_sea = fill_artifact_holes(with_sea)
+    zone_names = sorted({f["properties"]["name_eng"] for f in sea
+                         if f["properties"].get("name_eng") not in EXCLUDE_ZONES})
+    write("thailand_outline_with_sea.geojson", [{
+        "type": "Feature",
+        "properties": {
+            "name_th": "ประเทศไทย รวมเขตทางทะเล", "name_en": "Thailand incl. maritime zones",
+            "iso": "TH",
+            "source": "GISTDA Province_TH + L13_MarineZone (dissolved)",
+            "zones": zone_names,
+            "excludes": list(EXCLUDE_ZONES),
+            "parts": len(getattr(with_sea, "geoms", [with_sea])),
+            "area_km2": round(with_sea.area / 1e6, 1),
+            "perimeter_km": round(with_sea.length / 1000, 1),
+            "simplify_m": SIMPLIFY,
+        },
+        "geometry": to_out(with_sea)}])
 
     # ---- 2) แยกขอบนอกเป็น ชายฝั่ง / ชายแดนทางบก ----
     print("แยกชายฝั่งกับชายแดนทางบก …")

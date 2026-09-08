@@ -73,7 +73,9 @@
   <div class="layers">
     <label><input type="checkbox" id="marine" /> เขตทางทะเล (GISTDA สด)</label>
     <label><input type="checkbox" id="outline" checked />
-      <span class="swatch" style="background:#5f6368"></span> เส้นขอบนอกประเทศ (dissolve 77 จังหวัด)</label>
+      <span class="swatch" style="background:#5f6368"></span> เส้นขอบนอกประเทศ — แผ่นดิน (dissolve 77 จังหวัด)</label>
+    <label><input type="checkbox" id="outlineSea" />
+      <span class="swatch" style="background:#0b8043"></span> เส้นขอบนอกประเทศ — รวมทะเลถึง EEZ (ไม่รวมพื้นที่พัฒนาร่วม)</label>
     <label><input type="checkbox" id="borderline" checked />
       <span class="swatch" style="background:#b3261e"></span> แนวชายแดนทางบก (5,697 กม. / 31 จังหวัด)</label>
     <label><input type="checkbox" id="zone" checked />
@@ -146,6 +148,8 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 // ชั้นข้อมูลที่ derive จากไฟล์ในรีโป (สร้างด้วย build_border_geojson.py — ไม่ใช้ข้อมูลนอกรีโป)
 const DERIVED = {
   outline:    { file: () => "thailand_outline.geojson",     style: { color: "#5f6368", weight: 2, fill: false } },
+  outlineSea: { file: () => "thailand_outline_with_sea.geojson",
+                style: { color: "#0b8043", weight: 2, dashArray: "6 4", fillColor: "#0b8043", fillOpacity: 0.06 } },
   borderline: { file: () => "thailand_border_line.geojson", style: { color: "#b3261e", weight: 3, fill: false } },
   zone:       { file: () => `thailand_border_zone_${String(km()).replace(".", "_")}km.geojson`,
                 style: { color: "#f9ab00", weight: 1, fillColor: "#f9ab00", fillOpacity: 0.35 } },
@@ -243,6 +247,7 @@ async function toggleDerived(id, on) {
 
 // พื้นที่ชายแดนเป็น fill ทึบ ถ้าวางทับเส้นจะบังกัน — จัดลำดับใหม่ทุกครั้งที่เปิด/ปิดชั้น
 function restack() {
+  if (derivedLayers.outlineSea) derivedLayers.outlineSea.bringToBack();
   if (derivedLayers.zone) derivedLayers.zone.bringToBack();
   if (derivedLayers.outline) derivedLayers.outline.bringToFront();
   if (derivedLayers.borderline) derivedLayers.borderline.bringToFront();
