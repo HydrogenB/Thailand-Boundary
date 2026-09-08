@@ -11,7 +11,7 @@
   - เขตทางทะเล 54 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_maritime_zones.geojson
   - **ขอบนอกประเทศ** 308 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_outline.geojson
   - **แนวชายแดนทางบก** 106 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_border_line.geojson
-  - **พื้นที่ชายแดน 3.5 กม.** 157 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_border_zone_3_5km.geojson
+  - **พื้นที่ชายแดน** 1 / 3.5 / 5 / 10 กม. ~155-175 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_border_zone_3_5km.geojson (เปลี่ยน `3_5` เป็น `1`, `5`, `10` ได้)
   - แนวชายฝั่ง 108 KB — https://raw.githubusercontent.com/HydrogenB/Thailand-Boundary/main/thailand_coastline.geojson
 - **ดึงจาก GISTDA เองแบบสด** (ปรับ field/ความละเอียดเองได้ ไม่ต้องผ่านรีโปนี้):
   - จังหวัด — [Province_TH/FeatureServer/0](https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/Province_TH/FeatureServer/0)
@@ -35,6 +35,9 @@ curl "https://gistdaportal.gistda.or.th/arcgis/rest/services/Hosted/Province_TH/
 | `thailand_outline.geojson` | 308 KB | **เส้นขอบนอกประเทศ** — 1 feature MultiPolygon (361 ก้อน: แผ่นดินใหญ่ + เกาะ) ไม่มีเส้นจังหวัด |
 | `thailand_border_line.geojson` | 106 KB | **แนวชายแดนทางบก** 5,697 กม. แยกเป็น 31 จังหวัดชายแดน (LineString) |
 | `thailand_border_zone_3_5km.geojson` | 157 KB | **พื้นที่ชายแดน** — ในไทยห่างแนวชายแดน ≤ 3.5 กม. 17,088 ตร.กม. 31 จังหวัด |
+| `thailand_border_zone_1km.geojson` | 175 KB | พื้นที่ชายแดน 1 กม. — 5,339 ตร.กม. 31 จังหวัด |
+| `thailand_border_zone_5km.geojson` | 154 KB | พื้นที่ชายแดน 5 กม. — 23,711 ตร.กม. 31 จังหวัด |
+| `thailand_border_zone_10km.geojson` | 156 KB | พื้นที่ชายแดน 10 กม. — 44,667 ตร.กม. 32 จังหวัด |
 | `thailand_coastline.geojson` | 108 KB | แนวชายฝั่ง 5,107 กม. 23 จังหวัดติดทะเล (ส่วนที่เหลือของขอบนอก) |
 | `build_border_geojson.py` | — | สคริปต์ที่ derive 4 ไฟล์บนจากไฟล์จังหวัด+ทะเลในรีโป (`--km` เปลี่ยนรัศมีได้) |
 | `geofence.js` | — | `locate(lat, lng)` → อยู่ในไทยไหม / จังหวัดอะไร / เขตทะเลไหน / ห่างชายแดนกี่ กม. |
@@ -71,8 +74,9 @@ locate(20.4433, 99.8797, data, 10);      // เปลี่ยนรัศมี
 - เปิด-ปิดชั้น **ขอบนอกประเทศ / แนวชายแดน / พื้นที่ชายแดน** ทับกับ 77 จังหวัด และเขตทางทะเล
 - **คลิกบนแผนที่** → บอกจังหวัด, เขตทางทะเล, ระยะถึงแนวชายแดน และเตือนเมื่ออยู่ในรัศมีที่ตั้งไว้
 - **ตรวจพิกัดเป็นชุด** → วางลิสต์ `lat, lng, ชื่อ` ทีละหลายบรรทัด กด "ตรวจทั้งหมด" ได้ตารางผล
-  (พื้นที่ชายแดน / ในประเทศ / นอกประเทศ) + หมุดสีบนแผนที่ + สรุปจำนวน — ปรับรัศมีแล้วกดใหม่ได้ทันที
-- ปรับ **รัศมีพื้นที่ชายแดน** เองได้ (ค่าเริ่มต้น 3.5 กม.) ทั้งตอนคลิกและตอนตรวจเป็นชุด
+  (พื้นที่ชายแดน / ในประเทศ / นอกประเทศ) + หมุดสีบนแผนที่ + สรุปจำนวน
+- สลับ **รัศมีพื้นที่ชายแดน** ระหว่าง 1 / 3.5 / 5 / 10 กม. → polygon บนแผนที่ ผลของจุดที่คลิกไว้
+  และตารางที่ตรวจไว้แล้ว อัปเดตพร้อมกันทันที (ถ้าอยากได้รัศมีอื่นให้ build ไฟล์เพิ่มด้วย `--km`)
 
 ## ขอบประเทศ + พื้นที่ชายแดน มาจากไหน
 
@@ -82,7 +86,7 @@ locate(20.4433, 99.8797, data, 10);      // เปลี่ยนรัศมี
 ```bash
 pip install shapely pyproj
 python3 build_border_geojson.py            # ค่าเริ่มต้น 3.5 กม.
-python3 build_border_geojson.py --km 10    # อยากได้รัศมีอื่น
+python3 build_border_geojson.py --km 7.5   # รัศมีอื่น → thailand_border_zone_7_5km.geojson
 ```
 
 ขั้นตอน:

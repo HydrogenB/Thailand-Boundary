@@ -207,7 +207,7 @@ def main(km):
             "geometry": to_out(piece.buffer(0)),
         })
     zfeats.sort(key=lambda f: -f["properties"]["area_km2"])
-    write(f"thailand_border_zone_{str(km).replace('.', '_')}km.geojson", zfeats)
+    write(f"thailand_border_zone_{('%g' % km).replace('.', '_')}km.geojson", zfeats)
     print("  จังหวัดที่โดนพื้นที่ชายแดน:", len(zfeats))
     print("เสร็จ")
 

@@ -77,9 +77,15 @@
     <label><input type="checkbox" id="borderline" checked />
       <span class="swatch" style="background:#b3261e"></span> แนวชายแดนทางบก (5,697 กม. / 31 จังหวัด)</label>
     <label><input type="checkbox" id="zone" checked />
-      <span class="swatch" style="background:#f9ab00"></span> พื้นที่ชายแดน 3.5 กม. (17,088 ตร.กม.)</label>
-    <div class="km">รัศมีพื้นที่ชายแดนที่ใช้ตัดสิน
-      <input type="number" id="km" value="3.5" min="0" max="50" step="0.5" /> กม.
+      <span class="swatch" style="background:#f9ab00"></span> <span id="zoneLabel"></span></label>
+    <div class="km">รัศมีพื้นที่ชายแดน
+      <select id="km">
+        <option value="1">1 กม.</option>
+        <option value="3.5" selected>3.5 กม.</option>
+        <option value="5">5 กม.</option>
+        <option value="10">10 กม.</option>
+      </select>
+      <span class="src" style="margin:0">เปลี่ยนแล้วอัปเดตทั้งแผนที่และผล</span>
     </div>
   </div>
 
@@ -139,10 +145,15 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 
 // ชั้นข้อมูลที่ derive จากไฟล์ในรีโป (สร้างด้วย build_border_geojson.py — ไม่ใช้ข้อมูลนอกรีโป)
 const DERIVED = {
-  outline:    { file: "thailand_outline.geojson",           style: { color: "#5f6368", weight: 2, fill: false } },
-  borderline: { file: "thailand_border_line.geojson",       style: { color: "#b3261e", weight: 3, fill: false } },
-  zone:       { file: "thailand_border_zone_3_5km.geojson", style: { color: "#f9ab00", weight: 1, fillColor: "#f9ab00", fillOpacity: 0.35 } },
+  outline:    { file: () => "thailand_outline.geojson",     style: { color: "#5f6368", weight: 2, fill: false } },
+  borderline: { file: () => "thailand_border_line.geojson", style: { color: "#b3261e", weight: 3, fill: false } },
+  zone:       { file: () => `thailand_border_zone_${String(km()).replace(".", "_")}km.geojson`,
+                style: { color: "#f9ab00", weight: 1, fillColor: "#f9ab00", fillOpacity: 0.35 } },
 };
+
+// รัศมีที่มีไฟล์ polygon อยู่จริง (สร้างจาก build_border_geojson.py --km N) → พื้นที่รวม ตร.กม.
+const ZONE_AREA = { 1: "5,339", 3.5: "17,088", 5: "23,711", 10: "44,667" };
+const km = () => Number($("km").value);
 
 const $ = id => document.getElementById(id);
 let layer = null, features = [], marker = null;
@@ -207,8 +218,9 @@ async function toggleDerived(id, on) {
   if (derivedLayers[id]) { derivedLayers[id].remove(); delete derivedLayers[id]; }
   if (!on) { if (id === "borderline") borderLines = []; return; }
   const { file, style } = DERIVED[id];
+  const url = file();
   try {
-    const res = await fetch(file);
+    const res = await fetch(url);
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     derivedLayers[id] = L.geoJSON(data, {
@@ -224,7 +236,7 @@ async function toggleDerived(id, on) {
     restack();
   } catch (err) {
     $(id).checked = false;
-    fail(`โหลด ${file} ไม่ได้: ${err.message}`,
+    fail(`โหลด ${url} ไม่ได้: ${err.message}`,
          "ไฟล์ derive อยู่ในรีโป — เปิดผ่าน http:// (GitHub Pages หรือ python -m http.server)");
   }
 }
@@ -335,13 +347,16 @@ async function toggleMarine(on) {
 }
 
 // ---------- click check ----------
+let lastClick = null;
+
 function check(latlng) {
+  lastClick = latlng;
   const pt = [latlng.lng, latlng.lat];
   const hit = features.find(f => inGeometry(pt, f.geometry));
   const zones = marineFeatures.filter(f => inGeometry(pt, f.geometry)).map(f => f.properties)
     .sort((a, b) => zoneRank(a.name_eng) - zoneRank(b.name_eng));
   const ok = hit || zones.length;
-  const limit = Number($("km").value) || 0;
+  const limit = km();
   const near = hit ? borderDistance(latlng.lat, latlng.lng) : null;
   const inBorderZone = near && near.km <= limit;
   if (marker) marker.remove();
@@ -415,7 +430,7 @@ const STATUS = {
 async function runBatch() {
   if (!features.length) return;
   await ensureMarine();
-  const limit = Number($("km").value) || 0;
+  const limit = km();
   const rows = $("batch").value.split("\n").map(l => l.trim()).filter(Boolean).map(line => {
     const [a, b, ...rest] = line.split(",");
     const lat = Number(a), lng = Number(b);
@@ -459,7 +474,16 @@ function resetBatch() {
   $("summary").innerHTML = ""; $("table").innerHTML = "";
 }
 
+// เปลี่ยนรัศมี = เปลี่ยนทั้ง polygon บนแผนที่, ผลของจุดที่คลิกไว้ และตารางที่ตรวจไว้แล้ว
+async function onKmChange() {
+  $("zoneLabel").textContent = `พื้นที่ชายแดน ${km()} กม. (${ZONE_AREA[km()]} ตร.กม.)`;
+  if ($("zone").checked) await toggleDerived("zone", true);
+  if (lastClick) check(lastClick);
+  if ($("table").innerHTML) runBatch();
+}
+
 map.on("click", e => features.length && check(e.latlng));
+$("km").onchange = onKmChange;
 $("source").onchange = e => load(e.target.value);
 $("marine").onchange = e => toggleMarine(e.target.checked);
 for (const id of Object.keys(DERIVED)) $(id).onchange = e => toggleDerived(id, e.target.checked);
@@ -468,6 +492,7 @@ $("file").onchange = async e => {
   if (f) render(JSON.parse(await f.text()), "ไฟล์จากเครื่อง: " + f.name);
 };
 
+$("zoneLabel").textContent = `พื้นที่ชายแดน ${km()} กม. (${ZONE_AREA[km()]} ตร.กม.)`;
 $("run").onclick = runBatch;
 $("reset").onclick = resetBatch;
 $("batch").value = SAMPLES;
